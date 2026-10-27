@@ -1,0 +1,60 @@
+# 构建产物与运行目录
+*.bit
+*.db
+*.dmp
+*.log
+*.logw
+*_Runs/*/work/*
+*_Runs/*/*.qor
+*_Runs/*/*.area
+*_Runs/*/*.bid
+*_Runs/*/*.ts
+*_Runs/*/.opt_*
+*_Runs/*/.bitgen_*
+*_Runs/*/.temp.f
+*_Runs/*/.read_design*
+*_Runs/*/run.log
+*_Runs/*/run.bat
+*_Runs/*/flow.status
+*_Runs/*/*_flow.status
+*_Runs/*/minidump-*
+
+# 仿真中间件
+sim/work*/
+sim/work_*
+sim/shots/
+sim/backups/
+sim/*.wlf
+sim/transcript
+sim/vsim.wlf
+modelsim.ini
+
+# 备份与临时文件
+*.bak
+*.bak2
+*.v5bak
+*.ui_ctlbak
+*.v213bbak
+*.orig
+*.rej
+*~
+
+# 素材（体积过大，不入库）
+*.BMP
+*.bmp
+*.RAW
+*.mp3
+*.png
+*.jpg
+*.gif
+*.pptx
+song_48k.mif
+song_48k.mif.dath
+
+# Python / 系统
+__pycache__/
+*.pyc
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/

@@ -1,0 +1,460 @@
+module video_osd_overlay(
+    input  wire        I_clk,
+    input  wire        I_rst,
+    input  wire        I_enable,
+    input  wire        I_vs,
+    input  wire        I_de,
+    input  wire [23:0] I_rgb,
+    input  wire [3:0]  I_state_code,
+    output wire [23:0] O_rgb
+);
+
+localparam [23:0] PANEL_COLOR  = 24'h182838;
+localparam [23:0] BORDER_COLOR = 24'h00D0FF;
+localparam [23:0] TEXT_COLOR   = 24'hFFE060;
+
+function [7:0] hex_char;
+    input [3:0] value;
+    begin
+        case (value)
+            4'h0: hex_char = 8'h30;
+            4'h1: hex_char = 8'h31;
+            4'h2: hex_char = 8'h32;
+            4'h3: hex_char = 8'h33;
+            4'h4: hex_char = 8'h34;
+            4'h5: hex_char = 8'h35;
+            4'h6: hex_char = 8'h36;
+            4'h7: hex_char = 8'h37;
+            4'h8: hex_char = 8'h38;
+            4'h9: hex_char = 8'h39;
+            4'hA: hex_char = 8'h41;
+            4'hB: hex_char = 8'h42;
+            4'hC: hex_char = 8'h43;
+            4'hD: hex_char = 8'h44;
+            4'hE: hex_char = 8'h45;
+            default: hex_char = 8'h46;
+        endcase
+    end
+endfunction
+
+function [7:0] line0_char;
+    input [3:0] index;
+    begin
+        case (index)
+            4'd0: line0_char = 8'h41;
+            4'd1: line0_char = 8'h4E;
+            4'd2: line0_char = 8'h4C;
+            4'd3: line0_char = 8'h55;
+            4'd4: line0_char = 8'h20;
+            4'd5: line0_char = 8'h48;
+            4'd6: line0_char = 8'h44;
+            4'd7: line0_char = 8'h4D;
+            4'd8: line0_char = 8'h49;
+            default: line0_char = 8'h20;
+        endcase
+    end
+endfunction
+
+function [7:0] line1_char;
+    input [3:0] index;
+    input [3:0] state_code;
+    begin
+        case (index)
+            4'd0: line1_char = 8'h53;
+            4'd1: line1_char = 8'h44;
+            4'd2: line1_char = 8'h3A;
+            4'd3: line1_char = hex_char(state_code);
+            default: line1_char = 8'h20;
+        endcase
+    end
+endfunction
+
+function [4:0] glyph_row;
+    input [7:0] code;
+    input [2:0] row;
+    begin
+        case (code)
+            8'h30: begin
+                case (row)
+                    3'd0: glyph_row = 5'b01110;
+                    3'd1: glyph_row = 5'b10001;
+                    3'd2: glyph_row = 5'b10011;
+                    3'd3: glyph_row = 5'b10101;
+                    3'd4: glyph_row = 5'b11001;
+                    3'd5: glyph_row = 5'b10001;
+                    3'd6: glyph_row = 5'b01110;
+                    default: glyph_row = 5'b00000;
+                endcase
+            end
+            8'h31: begin
+                case (row)
+                    3'd0: glyph_row = 5'b00100;
+                    3'd1: glyph_row = 5'b01100;
+                    3'd2: glyph_row = 5'b00100;
+                    3'd3: glyph_row = 5'b00100;
+                    3'd4: glyph_row = 5'b00100;
+                    3'd5: glyph_row = 5'b00100;
+                    3'd6: glyph_row = 5'b01110;
+                    default: glyph_row = 5'b00000;
+                endcase
+            end
+            8'h32: begin
+                case (row)
+                    3'd0: glyph_row = 5'b01110;
+                    3'd1: glyph_row = 5'b10001;
+                    3'd2: glyph_row = 5'b00001;
+                    3'd3: glyph_row = 5'b00010;
+                    3'd4: glyph_row = 5'b00100;
+                    3'd5: glyph_row = 5'b01000;
+                    3'd6: glyph_row = 5'b11111;
+                    default: glyph_row = 5'b00000;
+                endcase
+            end
+            8'h33: begin
+                case (row)
+                    3'd0: glyph_row = 5'b11110;
+                    3'd1: glyph_row = 5'b00001;
+                    3'd2: glyph_row = 5'b00001;
+                    3'd3: glyph_row = 5'b01110;
+                    3'd4: glyph_row = 5'b00001;
+                    3'd5: glyph_row = 5'b00001;
+                    3'd6: glyph_row = 5'b11110;
+                    default: glyph_row = 5'b00000;
+                endcase
+            end
+            8'h34: begin
+                case (row)
+                    3'd0: glyph_row = 5'b00010;
+                    3'd1: glyph_row = 5'b00110;
+                    3'd2: glyph_row = 5'b01010;
+                    3'd3: glyph_row = 5'b10010;
+                    3'd4: glyph_row = 5'b11111;
+                    3'd5: glyph_row = 5'b00010;
+                    3'd6: glyph_row = 5'b00010;
+                    default: glyph_row = 5'b00000;
+                endcase
+            end
+            8'h35: begin
+                case (row)
+                    3'd0: glyph_row = 5'b11111;
+                    3'd1: glyph_row = 5'b10000;
+                    3'd2: glyph_row = 5'b10000;
+                    3'd3: glyph_row = 5'b11110;
+                    3'd4: glyph_row = 5'b00001;
+                    3'd5: glyph_row = 5'b00001;
+                    3'd6: glyph_row = 5'b11110;
+                    default: glyph_row = 5'b00000;
+                endcase
+            end
+            8'h36: begin
+                case (row)
+                    3'd0: glyph_row = 5'b01110;
+                    3'd1: glyph_row = 5'b10000;
+                    3'd2: glyph_row = 5'b10000;
+                    3'd3: glyph_row = 5'b11110;
+                    3'd4: glyph_row = 5'b10001;
+                    3'd5: glyph_row = 5'b10001;
+                    3'd6: glyph_row = 5'b01110;
+                    default: glyph_row = 5'b00000;
+                endcase
+            end
+            8'h37: begin
+                case (row)
+                    3'd0: glyph_row = 5'b11111;
+                    3'd1: glyph_row = 5'b00001;
+                    3'd2: glyph_row = 5'b00010;
+                    3'd3: glyph_row = 5'b00100;
+                    3'd4: glyph_row = 5'b01000;
+                    3'd5: glyph_row = 5'b01000;
+                    3'd6: glyph_row = 5'b01000;
+                    default: glyph_row = 5'b00000;
+                endcase
+            end
+            8'h38: begin
+                case (row)
+                    3'd0: glyph_row = 5'b01110;
+                    3'd1: glyph_row = 5'b10001;
+                    3'd2: glyph_row = 5'b10001;
+                    3'd3: glyph_row = 5'b01110;
+                    3'd4: glyph_row = 5'b10001;
+                    3'd5: glyph_row = 5'b10001;
+                    3'd6: glyph_row = 5'b01110;
+                    default: glyph_row = 5'b00000;
+                endcase
+            end
+            8'h39: begin
+                case (row)
+                    3'd0: glyph_row = 5'b01110;
+                    3'd1: glyph_row = 5'b10001;
+                    3'd2: glyph_row = 5'b10001;
+                    3'd3: glyph_row = 5'b01111;
+                    3'd4: glyph_row = 5'b00001;
+                    3'd5: glyph_row = 5'b00001;
+                    3'd6: glyph_row = 5'b01110;
+                    default: glyph_row = 5'b00000;
+                endcase
+            end
+            8'h41: begin
+                case (row)
+                    3'd0: glyph_row = 5'b01110;
+                    3'd1: glyph_row = 5'b10001;
+                    3'd2: glyph_row = 5'b10001;
+                    3'd3: glyph_row = 5'b11111;
+                    3'd4: glyph_row = 5'b10001;
+                    3'd5: glyph_row = 5'b10001;
+                    3'd6: glyph_row = 5'b10001;
+                    default: glyph_row = 5'b00000;
+                endcase
+            end
+            8'h42: begin
+                case (row)
+                    3'd0: glyph_row = 5'b11110;
+                    3'd1: glyph_row = 5'b10001;
+                    3'd2: glyph_row = 5'b10001;
+                    3'd3: glyph_row = 5'b11110;
+                    3'd4: glyph_row = 5'b10001;
+                    3'd5: glyph_row = 5'b10001;
+                    3'd6: glyph_row = 5'b11110;
+                    default: glyph_row = 5'b00000;
+                endcase
+            end
+            8'h43: begin
+                case (row)
+                    3'd0: glyph_row = 5'b01110;
+                    3'd1: glyph_row = 5'b10001;
+                    3'd2: glyph_row = 5'b10000;
+                    3'd3: glyph_row = 5'b10000;
+                    3'd4: glyph_row = 5'b10000;
+                    3'd5: glyph_row = 5'b10001;
+                    3'd6: glyph_row = 5'b01110;
+                    default: glyph_row = 5'b00000;
+                endcase
+            end
+            8'h44: begin
+                case (row)
+                    3'd0: glyph_row = 5'b11110;
+                    3'd1: glyph_row = 5'b10001;
+                    3'd2: glyph_row = 5'b10001;
+                    3'd3: glyph_row = 5'b10001;
+                    3'd4: glyph_row = 5'b10001;
+                    3'd5: glyph_row = 5'b10001;
+                    3'd6: glyph_row = 5'b11110;
+                    default: glyph_row = 5'b00000;
+                endcase
+            end
+            8'h45: begin
+                case (row)
+                    3'd0: glyph_row = 5'b11111;
+                    3'd1: glyph_row = 5'b10000;
+                    3'd2: glyph_row = 5'b10000;
+                    3'd3: glyph_row = 5'b11110;
+                    3'd4: glyph_row = 5'b10000;
+                    3'd5: glyph_row = 5'b10000;
+                    3'd6: glyph_row = 5'b11111;
+                    default: glyph_row = 5'b00000;
+                endcase
+            end
+            8'h46: begin
+                case (row)
+                    3'd0: glyph_row = 5'b11111;
+                    3'd1: glyph_row = 5'b10000;
+                    3'd2: glyph_row = 5'b10000;
+                    3'd3: glyph_row = 5'b11110;
+                    3'd4: glyph_row = 5'b10000;
+                    3'd5: glyph_row = 5'b10000;
+                    3'd6: glyph_row = 5'b10000;
+                    default: glyph_row = 5'b00000;
+                endcase
+            end
+            8'h48: begin
+                case (row)
+                    3'd0: glyph_row = 5'b10001;
+                    3'd1: glyph_row = 5'b10001;
+                    3'd2: glyph_row = 5'b10001;
+                    3'd3: glyph_row = 5'b11111;
+                    3'd4: glyph_row = 5'b10001;
+                    3'd5: glyph_row = 5'b10001;
+                    3'd6: glyph_row = 5'b10001;
+                    default: glyph_row = 5'b00000;
+                endcase
+            end
+            8'h49: begin
+                case (row)
+                    3'd0: glyph_row = 5'b11111;
+                    3'd1: glyph_row = 5'b00100;
+                    3'd2: glyph_row = 5'b00100;
+                    3'd3: glyph_row = 5'b00100;
+                    3'd4: glyph_row = 5'b00100;
+                    3'd5: glyph_row = 5'b00100;
+                    3'd6: glyph_row = 5'b11111;
+                    default: glyph_row = 5'b00000;
+                endcase
+            end
+            8'h4C: begin
+                case (row)
+                    3'd0: glyph_row = 5'b10000;
+                    3'd1: glyph_row = 5'b10000;
+                    3'd2: glyph_row = 5'b10000;
+                    3'd3: glyph_row = 5'b10000;
+                    3'd4: glyph_row = 5'b10000;
+                    3'd5: glyph_row = 5'b10000;
+                    3'd6: glyph_row = 5'b11111;
+                    default: glyph_row = 5'b00000;
+                endcase
+            end
+            8'h4D: begin
+                case (row)
+                    3'd0: glyph_row = 5'b10001;
+                    3'd1: glyph_row = 5'b11011;
+                    3'd2: glyph_row = 5'b10101;
+                    3'd3: glyph_row = 5'b10101;
+                    3'd4: glyph_row = 5'b10001;
+                    3'd5: glyph_row = 5'b10001;
+                    3'd6: glyph_row = 5'b10001;
+                    default: glyph_row = 5'b00000;
+                endcase
+            end
+            8'h4E: begin
+                case (row)
+                    3'd0: glyph_row = 5'b10001;
+                    3'd1: glyph_row = 5'b11001;
+                    3'd2: glyph_row = 5'b10101;
+                    3'd3: glyph_row = 5'b10011;
+                    3'd4: glyph_row = 5'b10001;
+                    3'd5: glyph_row = 5'b10001;
+                    3'd6: glyph_row = 5'b10001;
+                    default: glyph_row = 5'b00000;
+                endcase
+            end
+            8'h53: begin
+                case (row)
+                    3'd0: glyph_row = 5'b01111;
+                    3'd1: glyph_row = 5'b10000;
+                    3'd2: glyph_row = 5'b10000;
+                    3'd3: glyph_row = 5'b01110;
+                    3'd4: glyph_row = 5'b00001;
+                    3'd5: glyph_row = 5'b00001;
+                    3'd6: glyph_row = 5'b11110;
+                    default: glyph_row = 5'b00000;
+                endcase
+            end
+            8'h55: begin
+                case (row)
+                    3'd0: glyph_row = 5'b10001;
+                    3'd1: glyph_row = 5'b10001;
+                    3'd2: glyph_row = 5'b10001;
+                    3'd3: glyph_row = 5'b10001;
+                    3'd4: glyph_row = 5'b10001;
+                    3'd5: glyph_row = 5'b10001;
+                    3'd6: glyph_row = 5'b01110;
+                    default: glyph_row = 5'b00000;
+                endcase
+            end
+            8'h3A: begin
+                case (row)
+                    3'd0: glyph_row = 5'b00000;
+                    3'd1: glyph_row = 5'b00100;
+                    3'd2: glyph_row = 5'b00100;
+                    3'd3: glyph_row = 5'b00000;
+                    3'd4: glyph_row = 5'b00100;
+                    3'd5: glyph_row = 5'b00100;
+                    default: glyph_row = 5'b00000;
+                endcase
+            end
+            default: glyph_row = 5'b00000;
+        endcase
+    end
+endfunction
+
+function glyph_pixel;
+    input [4:0] row_bits;
+    input [2:0] col;
+    begin
+        case (col)
+            3'd0: glyph_pixel = row_bits[4];
+            3'd1: glyph_pixel = row_bits[3];
+            3'd2: glyph_pixel = row_bits[2];
+            3'd3: glyph_pixel = row_bits[1];
+            3'd4: glyph_pixel = row_bits[0];
+            default: glyph_pixel = 1'b0;
+        endcase
+    end
+endfunction
+
+reg [10:0] x_cnt;
+reg [9:0]  y_cnt;
+reg        de_d;
+reg        vs_d;
+reg [3:0]  state_code_meta;
+reg [3:0]  state_code_sync;
+
+always @(posedge I_clk or posedge I_rst) begin
+    if (I_rst) begin
+        x_cnt <= 11'd0;
+        y_cnt <= 10'd0;
+        de_d <= 1'b0;
+        vs_d <= 1'b0;
+    end
+    else begin
+        de_d <= I_de;
+        vs_d <= I_vs;
+
+        if (vs_d != I_vs) begin
+            x_cnt <= 11'd0;
+            y_cnt <= 10'd0;
+        end
+        else if (I_de) begin
+            if (!de_d)
+                x_cnt <= 11'd0;
+            else
+                x_cnt <= x_cnt + 11'd1;
+        end
+        else begin
+            x_cnt <= 11'd0;
+            if (de_d)
+                y_cnt <= y_cnt + 10'd1;
+        end
+    end
+end
+
+always @(posedge I_clk or posedge I_rst) begin
+    if (I_rst) begin
+        state_code_meta <= 4'd0;
+        state_code_sync <= 4'd0;
+    end
+    else begin
+        state_code_meta <= I_state_code;
+        state_code_sync <= state_code_meta;
+    end
+end
+
+wire panel_area = I_enable && I_de && (x_cnt >= 11'd12) && (x_cnt < 11'd190) && (y_cnt >= 10'd12) && (y_cnt < 10'd70);
+wire border_area = panel_area && ((x_cnt < 11'd14) || (x_cnt >= 11'd188) || (y_cnt < 10'd14) || (y_cnt >= 10'd68));
+
+wire line0_area = I_enable && I_de && (x_cnt >= 11'd24) && (x_cnt < 11'd168) && (y_cnt >= 10'd22) && (y_cnt < 10'd38);
+wire line1_area = I_enable && I_de && (x_cnt >= 11'd24) && (x_cnt < 11'd88) && (y_cnt >= 10'd46) && (y_cnt < 10'd62);
+
+wire [10:0] line0_rel_x = x_cnt - 11'd24;
+wire [9:0]  line0_rel_y = y_cnt - 10'd22;
+wire [10:0] line1_rel_x = x_cnt - 11'd24;
+wire [9:0]  line1_rel_y = y_cnt - 10'd46;
+
+wire [3:0] line0_index = line0_rel_x[7:4];
+wire [2:0] line0_col = line0_rel_x[3:1];
+wire [2:0] line0_row = line0_rel_y[3:1];
+wire [3:0] line1_index = line1_rel_x[7:4];
+wire [2:0] line1_col = line1_rel_x[3:1];
+wire [2:0] line1_row = line1_rel_y[3:1];
+
+wire [7:0] line0_code = line0_char(line0_index);
+wire [7:0] line1_code = line1_char(line1_index, state_code_sync);
+wire line0_pixel = line0_area && glyph_pixel(glyph_row(line0_code, line0_row), line0_col);
+wire line1_pixel = line1_area && glyph_pixel(glyph_row(line1_code, line1_row), line1_col);
+wire text_pixel = line0_pixel || line1_pixel;
+
+assign O_rgb = text_pixel ? TEXT_COLOR :
+               border_area ? BORDER_COLOR :
+               panel_area ? PANEL_COLOR :
+               I_rgb;
+
+endmodule

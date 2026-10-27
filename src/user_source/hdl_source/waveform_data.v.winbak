@@ -1,0 +1,196 @@
+module waveform_data #(
+    parameter integer POINT_COUNT = 640,
+    parameter integer INITIAL_SAMPLES = 800
+) (
+    input  wire                    clk,
+    input  wire                    rst,
+    input  wire                    sample_valid,
+    input  wire                    frame_pulse,
+    input  wire                    block_accept,
+    input  wire signed [23:0]      sample_left,
+    input  wire signed [23:0]      sample_right,
+    output reg                     wave_wr_en,
+    output reg  [9:0]              wave_wr_addr,
+    output reg  [7:0]              wave_wr_data,
+    output reg                     block_done
+);
+
+    localparam S_CAPTURE = 2'd0;
+    localparam S_FILL = 2'd1;
+    localparam S_WAIT = 2'd2;
+
+    reg [1:0] state;
+    reg [22:0] window_peak;
+    reg [9:0] column_count;
+    reg [10:0] phase_acc;
+    reg [10:0] samples_est;
+    reg [10:0] sample_count;
+    reg [7:0] last_emitted;
+
+    function [22:0] saturated_abs24;
+        input signed [23:0] value;
+        begin
+            if (value == 24'sh800000)
+                saturated_abs24 = 23'h7fffff;
+            else if (value[23])
+                saturated_abs24 = (~value) + 24'd1;
+            else
+                saturated_abs24 = value[22:0];
+        end
+    endfunction
+
+    function [7:0] compress_amplitude;
+        input [22:0] amplitude;
+        reg [4:0] exponent;
+        reg [2:0] mantissa;
+        reg [7:0] q;
+        reg [9:0] scaled;
+        begin
+            if (amplitude == 23'd0) begin
+                compress_amplitude = 8'd0;
+            end else begin
+                casex (amplitude)
+                    23'b1xxxxxxxxxxxxxxxxxxxxxx: exponent = 5'd22;
+                    23'b01xxxxxxxxxxxxxxxxxxxxx: exponent = 5'd21;
+                    23'b001xxxxxxxxxxxxxxxxxxxx: exponent = 5'd20;
+                    23'b0001xxxxxxxxxxxxxxxxxxx: exponent = 5'd19;
+                    23'b00001xxxxxxxxxxxxxxxxxx: exponent = 5'd18;
+                    23'b000001xxxxxxxxxxxxxxxxx: exponent = 5'd17;
+                    23'b0000001xxxxxxxxxxxxxxxx: exponent = 5'd16;
+                    23'b00000001xxxxxxxxxxxxxxx: exponent = 5'd15;
+                    23'b000000001xxxxxxxxxxxxxx: exponent = 5'd14;
+                    23'b0000000001xxxxxxxxxxxxx: exponent = 5'd13;
+                    23'b00000000001xxxxxxxxxxxx: exponent = 5'd12;
+                    23'b000000000001xxxxxxxxxxx: exponent = 5'd11;
+                    23'b0000000000001xxxxxxxxxx: exponent = 5'd10;
+                    23'b00000000000001xxxxxxxxx: exponent = 5'd9;
+                    23'b000000000000001xxxxxxxx: exponent = 5'd8;
+                    23'b0000000000000001xxxxxxx: exponent = 5'd7;
+                    23'b00000000000000001xxxxxx: exponent = 5'd6;
+                    23'b000000000000000001xxxxx: exponent = 5'd5;
+                    23'b0000000000000000001xxxx: exponent = 5'd4;
+                    23'b00000000000000000001xxx: exponent = 5'd3;
+                    23'b000000000000000000001xx: exponent = 5'd2;
+                    23'b0000000000000000000001x: exponent = 5'd1;
+                    default: exponent = 5'd0;
+                endcase
+                case (exponent)
+                    5'd0: mantissa = 3'd0;
+                    5'd1: mantissa = {amplitude[0], 2'b00};
+                    5'd2: mantissa = {amplitude[1:0], 1'b0};
+                    5'd3: mantissa = amplitude[2:0];
+                    5'd4: mantissa = amplitude[3:1];
+                    5'd5: mantissa = amplitude[4:2];
+                    5'd6: mantissa = amplitude[5:3];
+                    5'd7: mantissa = amplitude[6:4];
+                    5'd8: mantissa = amplitude[7:5];
+                    5'd9: mantissa = amplitude[8:6];
+                    5'd10: mantissa = amplitude[9:7];
+                    5'd11: mantissa = amplitude[10:8];
+                    5'd12: mantissa = amplitude[11:9];
+                    5'd13: mantissa = amplitude[12:10];
+                    5'd14: mantissa = amplitude[13:11];
+                    5'd15: mantissa = amplitude[14:12];
+                    5'd16: mantissa = amplitude[15:13];
+                    5'd17: mantissa = amplitude[16:14];
+                    5'd18: mantissa = amplitude[17:15];
+                    5'd19: mantissa = amplitude[18:16];
+                    5'd20: mantissa = amplitude[19:17];
+                    5'd21: mantissa = amplitude[20:18];
+                    default: mantissa = amplitude[21:19];
+                endcase
+                q = 8'd1 + {exponent, 3'b000} + {5'd0, mantissa};
+                scaled = {2'd0, q} + ({2'd0, q} >> 2) +
+                         ({2'd0, q} >> 3) + ({2'd0, q} >> 6);
+                if (scaled >= 10'd255)
+                    compress_amplitude = 8'd255;
+                else
+                    compress_amplitude = scaled[7:0];
+            end
+        end
+    endfunction
+
+    wire [22:0] left_abs = saturated_abs24(sample_left);
+    wire [22:0] right_abs = saturated_abs24(sample_right);
+    wire [22:0] sample_peak = (left_abs >= right_abs) ? left_abs : right_abs;
+    wire [22:0] peak_with_current = (window_peak >= sample_peak) ? window_peak : sample_peak;
+    wire [11:0] phase_next = {1'b0, phase_acc} + 12'd640;
+    wire emit_sample = (phase_next >= {1'b0, samples_est}) && (column_count < POINT_COUNT);
+    // V3: 线性幅度映射（不压缩、不补偿）——小信号就小
+    // 24bit 样本 -> 8bit：取 [22:15]
+    wire [7:0] linear_value = (peak_with_current[22:15] > 8'd255) ? 8'd255 : peak_with_current[22:15];
+
+    // 包络：上升立即、下降每列最多 2 级（形成短拖尾，鼓点能"弹"起来）
+    wire [7:0] decayed_value = (last_emitted > 8'd2) ? (last_emitted - 8'd2) : 8'd0;
+    wire [7:0] emit_value    = (linear_value >= decayed_value) ? linear_value : decayed_value;
+
+    always @(posedge clk or posedge rst) begin
+        if (rst) begin
+            state <= S_CAPTURE;
+            window_peak <= 23'd0;
+            column_count <= 10'd0;
+            phase_acc <= 11'd0;
+            samples_est <= INITIAL_SAMPLES;
+            sample_count <= 11'd0;
+            last_emitted <= 8'd0;
+            wave_wr_en <= 1'b0;
+            wave_wr_addr <= 10'd0;
+            wave_wr_data <= 8'd0;
+            block_done <= 1'b0;
+        end else begin
+            wave_wr_en <= 1'b0;
+            block_done <= 1'b0;
+            case (state)
+                S_CAPTURE: begin
+                    if (frame_pulse && block_accept) begin
+                        if ((sample_count >= 11'd700) && (sample_count <= 11'd900))
+                            samples_est <= sample_count;
+                        if (column_count < POINT_COUNT)
+                            state <= S_FILL;
+                        else begin
+                            block_done <= 1'b1;
+                            state <= S_WAIT;
+                        end
+                    end else if (block_accept && sample_valid) begin
+                        sample_count <= sample_count + 11'd1;
+                        if (emit_sample) begin
+                            wave_wr_en <= 1'b1;
+                            wave_wr_addr <= column_count;
+                            wave_wr_data <= emit_value;
+                            last_emitted <= emit_value;
+                            column_count <= column_count + 10'd1;
+                            phase_acc <= phase_next - samples_est;
+                            window_peak <= 23'd0;
+                        end else begin
+                            phase_acc <= phase_next[10:0];
+                            window_peak <= peak_with_current;
+                        end
+                    end
+                end
+                S_FILL: begin
+                    wave_wr_en <= 1'b1;
+                    wave_wr_addr <= column_count;
+                    wave_wr_data <= (sample_count == 11'd0) ? 8'd0 : last_emitted;
+                    if (column_count == POINT_COUNT - 1) begin
+                        column_count <= POINT_COUNT;
+                        block_done <= 1'b1;
+                        state <= S_WAIT;
+                    end else begin
+                        column_count <= column_count + 10'd1;
+                    end
+                end
+                default: begin
+                    if (block_accept) begin
+                        state <= S_CAPTURE;
+                        window_peak <= 23'd0;
+                        column_count <= 10'd0;
+                        phase_acc <= 11'd0;
+                        sample_count <= 11'd0;
+                        last_emitted <= 8'd0;
+                    end
+                end
+            endcase
+        end
+    end
+
+endmodule

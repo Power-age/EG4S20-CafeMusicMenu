@@ -1,0 +1,20 @@
+# vsim +SELECTED=6 +INTERRUPT +SCREEN -do {run -all; quit -code 0} -lib D:/AAA_University/Anlu/Project/sim/work_v211_resume -c tb_menu_pipeline 
+# //  ModelSim SE-64 10.1c Jul 28 2012 
+# //
+# //  Copyright 1991-2012 Mentor Graphics Corporation
+# //  All Rights Reserved.
+# //
+# //  THIS WORK CONTAINS TRADE SECRET AND PROPRIETARY INFORMATION
+# //  WHICH IS THE PROPERTY OF MENTOR GRAPHICS CORPORATION OR ITS
+# //  LICENSORS AND IS SUBJECT TO LICENSE TERMS.
+# //
+# Loading sv_std.std
+# Loading work.tb_menu_pipeline(fast)
+# Loading work.osd_renderer(fast)
+# run -all 
+# Interrupted blank windows=80
+# Screen checked=307200
+# RESULT failures=0 checked=8576 requests=153
+# PASS tb_menu_pipeline
+# ** Note: $finish    : ../../../sim/tb_menu_pipeline.v(234)
+#    Time: 3531540 ns  Iteration: 1  Instance: /tb_menu_pipeline

@@ -1,0 +1,185 @@
+module osd_renderer (
+    input  wire       clk,
+    input  wire       rst,
+    input  wire       vs,
+    input  wire       de,
+    input  wire       req_valid,
+    input  wire [6:0] req_ascii,
+    input  wire [7:0] req_x,
+    input  wire [6:0] req_y,
+    input  wire [1:0] req_type,
+    input  wire       req_w5,        // 1=5x7 手绘字（与左上角 OSD 同款；每字符 5x7 格）
+    input  wire       req_fill,      // 1=整块填充（忽略字形，8 格宽 x 7 格高全写 req_type）
+    output wire       req_ready,
+    output wire       font_rd_en,
+    output wire [6:0] font_ascii,
+    output wire [2:0] font_row,
+    output wire       font_w5,
+    input  wire [7:0] font_rd_data,
+    input  wire       font_rd_valid,
+    output reg        buf_wr_en,
+    output reg  [7:0] buf_wr_x,
+    output reg  [6:0] buf_wr_y,
+    output reg  [1:0] buf_wr_data,
+    input  wire       dirty_clr,
+    output wire       busy,
+    output wire [79:0] dirty_row,
+    output wire       clr_done_o
+);
+
+    localparam [2:0] S_WAIT_VS = 3'd0;
+    localparam [2:0] S_IDLE    = 3'd1;
+    localparam [2:0] S_READ    = 3'd2;
+    localparam [2:0] S_WAIT    = 3'd3;
+    localparam [2:0] S_WRITE   = 3'd4;
+    localparam [2:0] S_CLEAR   = 3'd5;
+
+    reg [2:0]  state;
+    reg        vs_d;
+    reg        frame_window;
+    reg        clr_done;
+    reg [14:0] clr_cnt;
+    reg [6:0]  char_ascii;
+    reg [7:0]  char_x;
+    reg [6:0]  char_y;
+    reg [1:0]  char_type;
+    reg        char_w5;
+    reg        char_fill;
+    reg [2:0]  row;
+    reg [2:0]  col;
+    reg [7:0]  glyph;        // 8x8 字模一行
+    reg [79:0] dirty;
+
+    wire vs_rise  = vs & ~vs_d;
+    wire in_blank = frame_window & ~de;
+    wire can_take = (state == S_IDLE) & in_blank & req_valid;
+
+    assign req_ready  = can_take;
+    assign busy       = (state == S_READ) | (state == S_WAIT) | (state == S_WRITE);
+    assign dirty_row  = dirty;
+    assign clr_done_o = clr_done;
+
+    // 8x8 字库（状态栏用）
+    assign font_rd_en = (state == S_READ) & in_blank;
+    assign font_ascii = char_ascii;
+    assign font_row   = row;
+    assign font_w5    = char_w5;
+
+    wire glyph_pixel = glyph[7];
+    wire highlighted_char = char_w5 && (char_type == 2'b11);
+
+
+    always @(posedge clk or posedge rst) begin
+        if (rst) begin
+            state        <= S_WAIT_VS;
+            vs_d         <= 1'b0;
+            frame_window <= 1'b0;
+            clr_done     <= 1'b0;
+            clr_cnt      <= 15'd0;
+            char_ascii   <= 7'd0;
+            char_x       <= 8'd0;
+            char_y       <= 7'd0;
+            char_type    <= 2'd0;
+            char_w5      <= 1'b0;
+            char_fill    <= 1'b0;
+            row          <= 3'd0;
+            col          <= 3'd0;
+            glyph        <= 8'd0;
+            dirty        <= 80'd0;
+            buf_wr_en    <= 1'b0;
+            buf_wr_x     <= 8'd0;
+            buf_wr_y     <= 7'd0;
+            buf_wr_data  <= 2'd0;
+        end else begin
+            vs_d <= vs;
+            if (vs_rise)
+                frame_window <= 1'b1;
+            else if (de)
+                frame_window <= 1'b0;
+
+            if (dirty_clr)
+                dirty <= 80'd0;
+
+            buf_wr_en    <= 1'b0;
+
+            case (state)
+                S_WAIT_VS: begin
+                    if (vs_rise)
+                        state <= clr_done ? S_IDLE : S_CLEAR;
+                end
+                S_CLEAR: begin
+                    if (de) begin
+                        state <= S_WAIT_VS;
+                    end else begin
+                        buf_wr_en   <= 1'b1;
+                        buf_wr_x    <= clr_cnt[7:0];
+                        buf_wr_y    <= clr_cnt[14:8];
+                        buf_wr_data <= 2'b00;
+                        if (clr_cnt == 15'd20479) begin
+                            clr_cnt  <= 15'd0;
+                            clr_done <= 1'b1;
+                            state    <= S_IDLE;
+                        end else begin
+                            clr_cnt <= clr_cnt + 15'd1;
+                        end
+                    end
+                end
+                S_IDLE: begin
+                    if (de) begin
+                        state <= S_WAIT_VS;
+                    end else if (in_blank & req_valid) begin
+                        char_ascii <= req_ascii;
+                        char_x     <= req_x;
+                        char_y     <= req_y;
+                        char_type  <= req_type;
+                        char_w5    <= req_w5;
+                        char_fill  <= req_fill;
+                        row        <= 3'd0;
+                        state      <= S_READ;
+                    end
+                end
+                S_READ: begin
+                    if (in_blank)
+                        state <= S_WAIT;
+                end
+                S_WAIT: begin
+                    if (!in_blank) begin
+                        state <= S_READ;
+                    end else if (font_rd_valid) begin
+                        glyph <= char_w5 ? {font_rd_data[4:0], 3'b000} : font_rd_data;
+                        col   <= 3'd0;
+                        state <= S_WRITE;
+                    end
+                end
+                S_WRITE: begin
+                    if (in_blank) begin
+                        glyph       <= {glyph[6:0], 1'b0};
+                        buf_wr_en   <= 1'b1;
+                        buf_wr_x    <= {char_x[4:0], col[2:0]};
+                        buf_wr_y    <= char_y + {4'd0, row};
+                        // fine 模式：每格取 16x16 字模 2x2 像素的“或”
+                        // fill 模式：整块写 char_type（8 格宽）；5x7 模式：列 0~4 取低 5 位；否则 8x8 取 [7-col]
+                        buf_wr_data <= char_fill ? char_type :
+                                       glyph_pixel ? (highlighted_char ? 2'b01 : char_type) :
+                                       highlighted_char ? 2'b11 : 2'b00;
+                        if (col == 3'd7) begin
+                            if (row == (char_w5 ? 3'd6 : 3'd7)) begin
+                                dirty <= dirty | (80'hFF << char_y);
+                                state <= S_IDLE;
+                            end else begin
+                                row   <= row + 3'd1;
+                                state <= S_READ;
+                            end
+                        end else begin
+                            col <= col + 3'd1;
+                        end
+                    end
+                end
+                default: begin
+                    state <= S_WAIT_VS;
+                end
+            endcase
+        end
+    end
+
+endmodule
