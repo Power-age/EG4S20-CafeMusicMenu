@@ -20,6 +20,7 @@ module menu_controller #(
     input  wire       plus_short,
     input  wire       plus_long,
     input  wire       sel_press,      // 已消抖的「选中」短按脉冲（复用 key3_trig）
+input  wire       vol_preset_sw,  // SW2 音量预设：上拨(1)=音量0，下拨(0)=音量15；仅翻转边沿生效
     // 输出
     output reg        panel_vis,
     output reg  [2:0] sel_row,
@@ -108,6 +109,7 @@ reg  [1:0] redraw_hold;
     reg [3:0] p_period;      // 1~10 秒
     reg       p_info;        // 0/1
 reg       p_tone;        // 0/1
+    reg       vol_preset_q;  // SW2 上一拍值，用于边沿检测
 
     assign o_volume   = p_volume;
     assign o_bright   = p_bright;
@@ -145,6 +147,7 @@ assign o_tone     = p_tone;
             p_period   <= 4'd3;
             p_info     <= 1'b1;
     p_tone     <= 1'b0;
+            vol_preset_q <= vol_preset_sw;   // 复位时以开关当前值作为基准，保证"上电不因开关位置改音量"
         end else begin
             // 编辑态闪烁相位
             if (editing) begin
@@ -247,6 +250,11 @@ assign o_tone     = p_tone;
                 end
                 default: state <= S_CLOSED;
             endcase
+
+            // ---- SW2 音量预设：仅在翻转边沿写入一次，之后按键调节正常覆盖 ----
+            vol_preset_q <= vol_preset_sw;
+            if (vol_preset_sw != vol_preset_q)
+                p_volume <= vol_preset_sw ? 4'd0 : 4'd15;
         end
     end
 

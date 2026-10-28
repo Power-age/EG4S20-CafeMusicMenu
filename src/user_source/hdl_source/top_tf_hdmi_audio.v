@@ -824,7 +824,8 @@ seg_scan seg_scan_m0(
 localparam [20:0] ZOOM_ROW_BASE = 21'd40320;   // 63 * 640
 localparam [20:0] ZOOM_LEN      = 21'd153600;  // 240 * 640
 
-wire        zoom_key_r = k2_long_v && (sw_key_mode == 1'b1) && !menu_panel_vis;
+wire        zoom_key_r = k2_long_v && (sw_key_mode == 1'b1) && !menu_panel_vis
+                         && (e2_disp_buf_sync != 2'd0);   // 封面页（bank0）禁用放大
 
 wire        seek_fwd_key = k2_short_v && (sw_key_mode == 1'b0) && !menu_active;
 wire        seek_bwd_key = k1_short_v && (sw_key_mode == 1'b0) && !menu_active;
@@ -855,7 +856,9 @@ always @(posedge video_clk or posedge rst_all) begin
     end
     else begin
         vs_0_d <= vs_0;
-        if (key3_long_v && !menu_panel_vis)
+        if (e2_disp_buf_sync == 2'd0)
+            zoom_sel <= 2'd0;                       // 封面页强制退出放大
+        else if (key3_long_v && !menu_panel_vis)
             zoom_sel <= (zoom_sel == 2'd1) ? 2'd0 : 2'd1;
         else if (zoom_key_r)
             zoom_sel <= (zoom_sel == 2'd2) ? 2'd0 : 2'd2;
@@ -1044,6 +1047,7 @@ menu_controller #(
     .plus_short  (k2_short_v),
     .plus_long   (1'b0),
     .sel_press   (key3_trig_x),
+    .vol_preset_sw(swd_sync),
     .panel_vis   (menu_panel_vis),
     .sel_row     (menu_sel_row),
     .editing     (menu_editing),
