@@ -735,7 +735,7 @@ end
 
 // ===================== TF 多图扫描与缓存（双缓冲） =====================
 sd_card_bmp #(
-    .CLK_FREQ_HZ       (100_000_000),
+    .CLK_FREQ_HZ       (75_000_000),   // 2026-10-30 实验：sd_card 域降为 75MHz
     .SCAN_START_SECTOR (32'd0),
     .SCAN_MAX_SECTOR   (32'd131071),
     .SCAN_TARGET_COUNT (3'd4)
@@ -1064,22 +1064,15 @@ menu_controller #(
     .blink       (menu_blink)
 );
 
-subtitle_render u_subtitle_render (
-    .clk        (video_clk),
-    .rst        (rst_all),
-    .vis        (1'b0),   // 2026/10/25 旧点阵字幕停用
-    .buf_ready  (osd_clr_done),
-    .vs         (vs),
-    .img_idx    (e2_disp_buf_sync),
-    .req_valid  (sub_req_valid),
-    .req_ascii  (sub_req_ascii),
-    .req_x      (sub_req_x),
-    .req_y      (sub_req_y),
-    .req_type   (sub_req_type),
-    .req_fill   (sub_req_fill),
-    .req_ready  (sub_req_ready),
-    .busy       (sub_busy)
-);
+// 2026-10-29 零违例实验：subtitle_render 自 2026/10/25 起 vis 钉为 0（旧点阵字幕停用），
+// 仅占面积不产出任何字符请求。删除实例、把它的输出常量化为 0，为时序腾面积。
+assign sub_req_valid = 1'b0;
+assign sub_req_ascii = 7'd0;
+assign sub_req_x     = 8'd0;
+assign sub_req_y     = 7'd0;
+assign sub_req_type  = 2'd0;
+assign sub_req_fill  = 1'b0;
+assign sub_busy      = 1'b0;
 
 menu_renderer u_menu_renderer (
     .clk        (video_clk),

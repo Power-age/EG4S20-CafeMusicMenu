@@ -2,7 +2,7 @@ param([int]$Seed = 17, [switch]$NoBuild, [int]$CaptureDelaySec = 3)
 $ErrorActionPreference = "Stop"
 $base = "D:\AAA_University\Anlu\Project\src\td_project\HDMI1.4b_Transmitter_v1.0_Runs"
 $td   = "D:/TD5.6.2/bin/td_commands_prompt.exe"
-$tcl  = "D:/TD5.6.2/doc/scripts/DefaultFlow.tcl"
+$tcl  = "D:/AAA_University/Anlu/Project/sim/DefaultFlow_hold.tcl"   # 含 fix_hold
 $bw   = "D:\TD5.6.2\bin\bw_commands_prompt.exe"
 $burn = "D:/AAA_University/Anlu/Project/sim/burn_jtag.tcl"
 $shot = "D:\AAA_University\Anlu\Project\sim\cam_capture.png"

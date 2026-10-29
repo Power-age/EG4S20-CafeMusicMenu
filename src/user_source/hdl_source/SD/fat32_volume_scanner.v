@@ -99,6 +99,12 @@ module fat32_volume_scanner (
     reg [8:0]  root_fat_byte_off;
     reg [31:0] root_fat_entry_bytes;
 
+    // 2026-10-29 零违例实验：簇号 -> LBA 的两级流水寄存器
+    wire [27:0] fat_nextc_w   = root_fat_entry_bytes[27:0];
+    wire [31:0] clu_off_w     = ({4'd0, fat_nextc_w} - 32'd2) << sectors_per_cluster_shift;
+    reg  [31:0] root_clu_off_q;
+    reg  [31:0] root_lba_next_q;
+
     assign scan_busy = (state != ST_IDLE);
 
     function [15:0] le16;
@@ -268,10 +274,17 @@ module fat32_volume_scanner (
             root_dir_end_seen <= 1'b0;
             root_fat_byte_off <= 9'd0;
             root_fat_entry_bytes <= 32'd0;
+            root_clu_off_q  <= 32'd0;
+            root_lba_next_q <= 32'd0;
         end else begin
             scan_done <= 1'b0;
             track_push <= 1'b0;
             sector_req <= 1'b0;
+
+            // 簇号 -> LBA 两级流水（条目在 sector 早期就稳定，距 sector_done 还有数百拍）
+            root_clu_off_q  <= clu_off_w;
+            root_lba_next_q <= data_start_lba + root_clu_off_q;
+
             if (sector_valid && state != ST_ROOT_WAIT && state != ST_ROOT_FAT_WAIT)
                 sector_buffer[sector_byte_index] <= sector_byte;
 
@@ -530,10 +543,11 @@ module fat32_volume_scanner (
                                 finish_with_error(ERR_SECTOR);
                             end else begin
                                 root_cluster_cur <= fat_nextc;
-                                root_lba <= data_start_lba
-                                            + ((fat_nextc - 32'd2) << sectors_per_cluster_shift);
-                                sector_lba <= data_start_lba
-                                              + ((fat_nextc - 32'd2) << sectors_per_cluster_shift);
+                                // 2026-10-29 零违例实验：把 (nextc-2)<<shift 与 +data_start_lba 拆成两级流水，
+                                // 断开 "FAT 条目 -> 减 -> 变移位 -> 加 -> LBA 寄存器" 的长链。
+                                // 条目 4 字节在 sector 早期就已到齐，距 sector_done 还有数百拍，两级流水安全。
+                                root_lba   <= root_lba_next_q;
+                                sector_lba <= root_lba_next_q;
                                 root_sec_in_cluster <= 9'd0;
                                 state <= ST_ROOT_REQ;
                             end

@@ -42,18 +42,19 @@ doc/                              项目方案、进度、交互说明、作品�
 3. **布局种子写在 `.../phy_1/settings.cfg` 的 `set phyWildParams {place seed N}`**（当前最优 `seed 5`）。注意：用 TD GUI 重建 run 会把这一行冲掉，重新布线前务必确认它还在；
 4. 批处理流程：`powershell -ExecutionPolicy Bypass -File sim/loop.ps1 -Seed 5`。
 
-## 关键指标（E19.20 定版，seed 5）
+## 关键指标（E19.21 零违例版，seed 5）
 
 | 项 | 值 |
 |---|---|
 | 器件 | EG4S20BG256 |
-| slices | 96.06% |
-| REG / LUT | 9135 / 10478 |
-| `video_clk` | +12.590 ns |
-| `ext_mem_clk`（125MHz 帧缓存） | **+0.145 ns，0 违例** |
-| `sd_card_clk`（100MHz） | −2.222 ns（全工程最差链路，实测读卡与画面正常） |
+| slices | 96.13% |
+| REG / LUT | 9199 / 10371 |
+| `video_clk`（25MHz） | setup **+12.621 ns** / hold +0.027 ns |
+| `ext_mem_clk`（125MHz 帧缓存） | setup **+0.231 ns** / hold +0.095 ns |
+| `sd_card_clk`（**75 MHz**，由 100MHz 降频） | setup **+0.191 ns** / hold +0.024 ns |
+| 违例端点 | **setup + hold 合计 0（九个时钟域全绿）** |
 | 黑盒 / BRAM 超限 | 0 / 无 |
-| 交付 MD5 | `7E27A5B99602CA3CD267E258E7B00A24` |
+| 交付 MD5 | `0D1FC18C808CBDB58191CA2D33015BEB`（零违例版；上一版 `7E27A5B99602CA3CD267E258E7B00A24` 为 `sd_card` −2.222ns 的定版） |
 
 ## 已知限制
 
