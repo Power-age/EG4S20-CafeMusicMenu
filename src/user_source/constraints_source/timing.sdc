@@ -160,3 +160,6 @@ set_false_path -from [get_clocks {ext_mem_clk_sft}] -to [get_clocks {ext_mem_clk
 #    ramread0.addra、bmp_read/up_raw_x_reg -> up_row_mem.addra），量级 -20ps 上下，
 #    已知无法用 uncertainty 降低，留待二期打拍/降拥塞后复观察。
 # ------------------------------------------------------------
+
+# 2026-10-31 upscale dead path: 上采样通路已功能关闭（素材规格 >=640x480）
+set_false_path -from [get_cells -hier -filter {NAME =~ *up_*}]

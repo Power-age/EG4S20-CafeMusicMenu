@@ -48,12 +48,16 @@ if (-not $NoBuild) {
     Get-Content "$base\phy_1\route.qor" | Select-String -Pattern "slices percentage" | ForEach-Object { "  " + $_.Line.Trim() }
     $txt = [System.IO.File]::ReadAllLines("$base\phy_1\final_timing.rpt")
     $j = (0..($txt.Count - 1)) | Where-Object { $txt[$_] -match "Max\s+:\s+SWNS" }
+$jm = (0..($txt.Count - 1)) | Where-Object { $txt[$_] -match "Min\s+:\s+HWNS" }
     $names = @("sd_card", "video", "ext_mem")
     $wns = @()
     for ($n = 0; $n -lt 3; $n++) { if ($j.Count -gt $n) { "  {0,-8} {1}" -f $names[$n], (($txt[$j[$n]] -replace "\s+", " ").Trim()); if ($txt[$j[$n]] -match "SWNS\s+(-?[\d.]+)ns") { $wns += [double]$Matches[1] } } }
     if ($wns.Count -ge 3) {
-        if (($wns[1] -lt 0) -or ($wns[2] -lt -0.8)) {
-            "ABORT_TIMING video=$($wns[1]) ext_mem=$($wns[2]) (need video>=0, ext_mem>=-0.8)"
+        $hwns = @()
+for ($n = 0; $n -lt 3; $n++) { if ($jm.Count -gt $n) { if ($txt[$jm[$n]] -match "HWNS\s+(-?[\d.]+)ns") { $hwns += [double]$Matches[1] } else { $hwns += 0.0 } } else { $hwns += 0.0 } }
+"  hold: sd=$($hwns[0]) video=$($hwns[1]) ext_mem=$($hwns[2])"
+if (($wns[1] -lt 0) -or ($wns[2] -lt -0.8) -or ($hwns[0] -lt 0) -or ($hwns[1] -lt 0) -or ($hwns[2] -lt 0)) {
+            "ABORT_TIMING setup v=$($wns[1]) e=$($wns[2]); hold sd=$($hwns[0]) v=$($hwns[1]) e=$($hwns[2]) (need ALL >= 0)"
             exit 4
         }
     }

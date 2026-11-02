@@ -188,7 +188,8 @@ assign source_height_32 = {16'd0, height[15:0]};
 assign bmp_dimension_bits_ok = (width[31:16] == 16'd0) && (height[31:16] == 16'd0);
 assign source_fits_target = (width <= target_width) && (height <= target_height);
 assign source_dimension_supported = source_fits_target || (width > target_width) || (height > target_height);
-assign upscale_needed = source_fits_target && ((active_width > width[15:0]) || (active_height > height[15:0]));
+// 2026-10-31：按素材规格（宽高均 >= 640x480）关闭上采样通路（该通路的寄存器组会残留 ps 级 hold 违例）
+assign upscale_needed = 1'b0;
 assign pixel_data_end_sum_next = {4'd0, pixel_offset} + {2'd0, source_image_bytes};
 assign stream_pixel_byte = (bmp_len_cnt >= pixel_offset) && (bmp_len_cnt < pixel_data_end);
 assign source_row_end_byte = (bmp_row_byte_cnt == source_row_stride - 18'd1);
@@ -616,80 +617,6 @@ always @(posedge clk or posedge rst) begin
                     up_scale_y_acc <= 32'd0;
                 end
             end
-            ST_UP_PREP: begin
-                up_raw_x <= 16'd0;
-                up_emit_x <= 16'd0;
-                up_emit_src_x <= 16'd0;
-                up_sector_byte_cnt <= 9'd0;
-                up_sector_start_offset <= up_row_start_calc[8:0];
-                up_row_read_byte_cnt <= 18'd0;
-                up_pixel_byte_idx <= 2'd0;
-                up_pixel_data <= 16'd0;
-                up_scale_x_acc <= 32'd0;
-            end
-            ST_UP_READ: begin
-                if (sd_sec_read_data_valid) begin
-                    if (up_sector_byte_cnt == 9'd511)
-                        up_sector_byte_cnt <= 9'd0;
-                    else
-                        up_sector_byte_cnt <= up_sector_byte_cnt + 9'd1;
-
-                    if (up_row_byte_active) begin
-                        up_row_read_byte_cnt <= up_row_read_byte_cnt + 18'd1;
-
-                        if (up_row_read_byte_cnt < source_row_bytes) begin
-                            case (up_pixel_byte_idx)
-                                2'd0: begin
-                                    up_pixel_data[7:0] <= sd_sec_read_data;
-                                    up_pixel_byte_idx <= 2'd1;
-                                end
-                                2'd1: begin
-                                    up_pixel_data[15:8] <= sd_sec_read_data;
-                                    up_pixel_byte_idx <= 2'd2;
-                                end
-                                2'd2: begin
-                                    up_raw_x <= up_raw_x + 16'd1;
-                                    up_pixel_byte_idx <= 2'd0;
-                                end
-                                default: ;
-                            endcase
-                        end
-                    end
-                end
-            end
-            ST_UP_SCALE: begin
-                up_emit_x <= 16'd0;
-                up_emit_src_x <= 16'd0;
-                up_scale_x_acc <= 32'd0;
-            end
-            ST_UP_EMIT: begin
-                if (up_emit_x < active_width - 16'd1) begin
-                    up_emit_x <= up_emit_x + 16'd1;
-                    if (up_scale_x_acc_next >= active_width_32) begin
-                        up_scale_x_acc <= up_scale_x_acc_next - active_width_32;
-                        if (up_emit_src_x < width[15:0] - 16'd1)
-                            up_emit_src_x <= up_emit_src_x + 16'd1;
-                    end else begin
-                        up_scale_x_acc <= up_scale_x_acc_next;
-                    end
-                end
-            end
-            ST_UP_FETCH: begin
-            end
-            ST_UP_REPEAT: begin
-                if (up_out_y < active_height - 16'd1) begin
-                    up_out_y <= up_out_y + 16'd1;
-                    if (up_scale_y_acc_next >= active_height_32) begin
-                        up_scale_y_acc <= up_scale_y_acc_next - active_height_32;
-                        if (up_source_y < height[15:0] - 16'd1) begin
-                            up_source_y     <= up_source_y + 16'd1;
-                            up_row_calc_acc <= up_row_calc_acc + {18'd0, source_row_stride};
-                        end
-                    end else begin
-                        up_scale_y_acc <= up_scale_y_acc_next;
-                    end
-                end
-            end
             default: ;
         endcase
     end
@@ -920,7 +847,7 @@ always @(posedge clk or posedge rst) begin
                 state_code <= 4'd3;
                 if (write_req_ack) begin
                     write_req <= 1'b0;
-                    state     <= upscale_needed ? ST_UP_PREP : ST_LOAD_DATA;
+                    state     <= ST_LOAD_DATA;   // 2026-10-31 上采样已移除
                 end
             end
 
@@ -941,60 +868,6 @@ always @(posedge clk or posedge rst) begin
                     load_error_pulse <= 1'b1;
                     state            <= ST_IDLE;
                 end
-            end
-
-            ST_UP_PREP: begin
-                state_code       <= 4'd4;
-                sd_sec_read      <= 1'b0;
-                sd_sec_read_addr <= up_row_start_sector;
-                state            <= ST_UP_READ;
-            end
-
-            ST_UP_READ: begin
-                state_code  <= 4'd4;
-                sd_sec_read <= 1'b1;
-
-                if (sd_sec_read_end) begin
-                    sd_sec_read <= 1'b0;
-                    if (up_row_read_done) begin
-                        state <= ST_UP_SCALE;
-                    end else begin
-                        sd_sec_read_addr <= sd_sec_read_addr + 32'd1;
-                    end
-                end else if (sd_sec_read_error) begin
-                    sd_sec_read      <= 1'b0;
-                    load_error_pulse <= 1'b1;
-                    state            <= ST_IDLE;
-                end
-            end
-
-            ST_UP_SCALE: begin
-                state_code  <= 4'd4;
-                sd_sec_read <= 1'b0;
-                state       <= ST_UP_FETCH;
-            end
-
-            ST_UP_FETCH: begin
-                state <= ST_UP_EMIT;
-            end
-
-            ST_UP_EMIT: begin
-                state_code  <= 4'd4;
-                sd_sec_read <= 1'b0;
-                if (up_emit_x >= active_width - 16'd1)
-                    state <= ST_UP_REPEAT;
-                else
-                    state <= ST_UP_FETCH;
-            end
-
-            ST_UP_REPEAT: begin
-                state_code  <= 4'd4;
-                sd_sec_read <= 1'b0;
-                if (up_out_y >= active_height - 16'd1) begin
-                    load_finish_pending <= 1'b1;
-                    state <= ST_IDLE;
-                end else
-                    state <= ST_UP_PREP;
             end
 
             default: begin

@@ -194,6 +194,9 @@ proc opt_route_fun {} {
     set_param flow qor_monitor off
   }
   route
+  # 2026-10-31：hold 残差 −4~20ps 压不平，改为多轮修复（每轮之间重新报告时序）
+  fix_hold
+  fix_hold
   fix_hold
   if { [string equal $arr_filter on] && [string equal $drHoldFix on] } {
     flow_continue_check -step route -wns $arr_rwns -name ${prj_name}

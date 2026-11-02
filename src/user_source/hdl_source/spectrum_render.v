@@ -13,7 +13,7 @@ module spectrum_render (
     output reg          O_de,
     output reg  [23:0]  O_rgb
 );
-    localparam [9:0] BASE = 10'd471;
+    localparam [9:0] BASE = 10'd479;      // 2026-10-31：贴到画面最底一行
 
     reg [5:0] band_h;
     always @(*) begin
@@ -93,9 +93,10 @@ module spectrum_render (
     wire [5:0] band_he = (band_h == 6'd0)   ? 6'd0 :
                          (hsum > 7'd63)     ? 6'd63 : hsum[5:0];
 
+    // 2026-10-31：只把基线移到画面最底一行（y=479），高度与配色保持原样
     wire [9:0] bar_top  = BASE - {4'd0, band_he};
     wire       in_strip = (I_x[3:0] < 4'd12);
-    wire       in_area  = I_de && in_strip && (I_y < BASE) && (I_y >= (BASE - 10'd64));
+    wire       in_area  = I_de && in_strip && (I_y <= BASE) && (I_y >= (BASE - 10'd64));
     wire       bar_on   = in_area && (band_he != 6'd0) && (I_y >= bar_top);
     wire       cap_on   = bar_on && (I_y < (bar_top + 10'd2));
     wire       base_on  = I_de && (I_y == BASE);

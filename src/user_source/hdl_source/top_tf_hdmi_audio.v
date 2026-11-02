@@ -144,13 +144,16 @@ wire [1:0]  si_req_type;
 wire        si_req_ready;
 wire        si_busy;
 
-assign osd_req_valid = menu_busy ? menu_req_valid : (sub_busy ? sub_req_valid : (sb_req_valid ? sb_req_valid : si_req_valid));
+// 2026-10-31：左上角 PAGE 信息条改由 FPGA 中文角标取代（0=关闭 PAGE 条）
+localparam PAGE_BAR_EN = 1'b1;   // 仍让信息条跑一次（画空格清掉旧字符），文字内容在 src_info_render 里改成空
+
+assign osd_req_valid = menu_busy ? menu_req_valid : (sub_busy ? sub_req_valid : (sb_req_valid ? sb_req_valid : (si_req_valid & PAGE_BAR_EN)));
 assign osd_req_ascii = menu_busy ? menu_req_ascii : (sub_busy ? sub_req_ascii : (sb_req_valid ? sb_req_ascii : si_req_ascii));
 assign osd_req_x     = menu_busy ? menu_req_x     : (sub_busy ? sub_req_x     : (sb_req_valid ? sb_req_x : si_req_x));
 assign osd_req_y     = menu_busy ? menu_req_y     : (sub_busy ? sub_req_y     : (sb_req_valid ? sb_req_y : si_req_y));
 assign osd_req_type  = menu_busy ? menu_req_type  : (sub_busy ? sub_req_type  : (sb_req_valid ? sb_req_type : si_req_type));
 assign osd_req_fill  = menu_busy ? menu_req_fill  : (sub_busy ? sub_req_fill : 1'b0);
-assign use_w5        = menu_busy | sub_busy | sb_req_valid | si_req_valid;   // 菜单/字幕/状态栏都用 5x7 手绘字
+assign use_w5        = menu_busy | sub_busy | sb_req_valid | (si_req_valid & PAGE_BAR_EN);   // 菜单/字幕/状态栏都用 5x7 手绘字
 assign osd_req_w5    = use_w5;
 assign menu_req_ready = osd_req_ready &&  menu_busy;
 assign sub_req_ready  = osd_req_ready && !menu_busy &&  sub_busy;
@@ -172,6 +175,9 @@ wire [15:0] display_active_width_sd;
 wire [15:0] display_active_height_sd;
 wire [15:0] display_active_offset_x_sd;
 wire [15:0] display_active_offset_y_sd;
+wire        sd_geom_we;
+wire [1:0]  sd_geom_bank;
+
 wire        display_image_area;
 wire [15:0] video_x_pos;
 wire [15:0] video_y_pos;
@@ -351,6 +357,31 @@ wire [9:0]  tmds_clk_data;
 wire rst_all;
 
 assign rst_all = ~rst_n | ~audio_pll_lock | ~sys_pll_lock | ~video_pll_lock;
+
+// ===================== 2026-10-30 每 bank 独立几何 =====================
+// 原来只有一份全局几何（且只在第一张图时锁存），混放不同比例素材会串框。
+// 这里在装载提交时按 bank 存一份 {宽,高,偏移X,偏移Y}，显示时按当前显示 bank 取值。
+// 规模：4 x 64bit 寄存器 + 4:1 选择，约 +130 LUT；读写都在慢路径上。
+reg [15:0] bank_geom_w  [0:3];
+reg [15:0] bank_geom_h  [0:3];
+reg [15:0] bank_geom_ox [0:3];
+reg [15:0] bank_geom_oy [0:3];
+integer    gbi;
+always @(posedge sd_card_clk or posedge rst_all) begin
+    if (rst_all) begin
+        for (gbi = 0; gbi < 4; gbi = gbi + 1) begin
+            bank_geom_w[gbi]  <= 16'd640;
+            bank_geom_h[gbi]  <= 16'd480;
+            bank_geom_ox[gbi] <= 16'd0;
+            bank_geom_oy[gbi] <= 16'd0;
+        end
+    end else if (sd_geom_we) begin
+        bank_geom_w [sd_geom_bank] <= display_active_width_sd;
+        bank_geom_h [sd_geom_bank] <= display_active_height_sd;
+        bank_geom_ox[sd_geom_bank] <= display_active_offset_x_sd;
+        bank_geom_oy[sd_geom_bank] <= display_active_offset_y_sd;
+    end
+end
 assign param_default_en = 1'b0;   // 任务18：原 sw_default 已改为按键模式选择，取消一键默认
 assign transition_fade_mode = ~m_trans[0];   // V2-13: 0=FADE(黑场淡入淡出) 1=WIPE(揭幕)
 assign transition_busy_video = e2_transition_mode_sync && (e2_fade_state != E2_FADE_IDLE);
@@ -468,8 +499,7 @@ always @(posedge video_clk or posedge rst_all) begin
         e2_fade_read_buf_idx <= 2'd0;
         e2_fade_target_buf_idx <= 2'd0;
         e2_active_width_meta <= 16'd640;
-        e2_active_width_sync <= 16'd640;
-        e2_active_height_meta <= 16'd480;
+        e2_active_width_sync <= 16'd640;        e2_active_height_meta <= 16'd480;
         e2_active_height_sync <= 16'd480;
         e2_active_offset_x_meta <= 16'd0;
         e2_active_offset_x_sync <= 16'd0;
@@ -487,13 +517,13 @@ always @(posedge video_clk or posedge rst_all) begin
         e2_display_valid_sync <= e2_display_valid_meta;
         e2_transition_mode_meta <= transition_fade_mode;
         e2_transition_mode_sync <= e2_transition_mode_meta;
-        e2_active_width_meta <= display_active_width_sd;
+        e2_active_width_meta <= bank_geom_w[e2_disp_buf_sync];
         e2_active_width_sync <= e2_active_width_meta;
-        e2_active_height_meta <= display_active_height_sd;
+        e2_active_height_meta <= bank_geom_h[e2_disp_buf_sync];
         e2_active_height_sync <= e2_active_height_meta;
-        e2_active_offset_x_meta <= display_active_offset_x_sd;
+        e2_active_offset_x_meta <= bank_geom_ox[e2_disp_buf_sync];
         e2_active_offset_x_sync <= e2_active_offset_x_meta;
-        e2_active_offset_y_meta <= display_active_offset_y_sd;
+        e2_active_offset_y_meta <= bank_geom_oy[e2_disp_buf_sync];
         e2_active_offset_y_sync <= e2_active_offset_y_meta;
         e2_vs_d <= vs;
 
@@ -757,6 +787,8 @@ sd_card_bmp #(
     .display_active_height(display_active_height_sd),
     .display_active_offset_x(display_active_offset_x_sd),
     .display_active_offset_y(display_active_offset_y_sd),
+    .geom_we           (sd_geom_we),
+    .geom_bank         (sd_geom_bank),
 
     .write_finish_toggle(frame_write_toggle_mem),
     .write_buf_idx     (write_buf_idx),
@@ -821,8 +853,8 @@ seg_scan seg_scan_m0(
 );
 
 // ===================== 局部放大 2×（左卡 / 右卡）=====================
-localparam [20:0] ZOOM_ROW_BASE = 21'd40320;   // 63 * 640
-localparam [20:0] ZOOM_LEN      = 21'd153600;  // 240 * 640
+localparam [20:0] ZOOM_ROW_BASE = 21'd76800;   // 2026-10-31：中心放大 -> 起点第 120 行 (120*640)
+localparam [20:0] ZOOM_LEN      = 21'd153600;  // 2x：读 240 行 * 640
 
 wire        zoom_key_r = k2_long_v && (sw_key_mode == 1'b1) && !menu_panel_vis
                          && (e2_disp_buf_sync != 2'd0);   // 封面页（bank0）禁用放大
@@ -856,11 +888,12 @@ always @(posedge video_clk or posedge rst_all) begin
     end
     else begin
         vs_0_d <= vs_0;
+        // 2026-10-31 Z4：两个放大键功能一致（任一键切换）；切页/封面页强制退出放大
         if (e2_disp_buf_sync == 2'd0)
-            zoom_sel <= 2'd0;                       // 封面页强制退出放大
-        else if (key3_long_v && !menu_panel_vis)
-            zoom_sel <= (zoom_sel == 2'd1) ? 2'd0 : 2'd1;
-        else if (zoom_key_r)
+            zoom_sel <= 2'd0;
+        else if (e2_disp_changed)
+            zoom_sel <= 2'd0;                       // 放大中切页 -> 回到正常视图
+        else if ((key3_long_v || zoom_key_r) && !menu_panel_vis)
             zoom_sel <= (zoom_sel == 2'd2) ? 2'd0 : 2'd2;
         if (vs_0 != vs_0_d)
             zoom_sel_v <= zoom_sel;
@@ -868,7 +901,24 @@ always @(posedge video_clk or posedge rst_all) begin
 end
 
 wire        zoom_en_v   = (zoom_sel_v != 2'd0);
-wire [9:0]  zoom_col0   = (zoom_sel_v == 2'd1) ? 10'd10 : 10'd320;
+// ---- 2026-10-31：按页的商品放大窗口（行起点 + 列起点），以商品为中心 ----
+//   页0 封面=门店中部；页1 手冲=右侧圆形产品；页2 卡布=右侧咖啡杯；页3 抹茶=上方圆形产品
+reg [9:0] zm_row [0:3];
+reg [9:0] zm_col [0:3];
+integer zmi;
+always @(posedge video_clk or posedge rst_all) begin
+    if (rst_all) begin
+        zm_row[0] <= 10'd100; zm_col[0] <= 10'd160;   // 封面：不放大（保留占位）
+        zm_row[1] <= 10'd100; zm_col[1] <= 10'd224;   // 手冲：2x 窗口(320x240)
+        zm_row[2] <= 10'd 60; zm_col[2] <= 10'd338;   // 卡布：2x 窗口
+        zm_row[3] <= 10'd 40; zm_col[3] <= 10'd160;   // 抹茶：2x 窗口
+    end
+end
+wire [9:0]  zm_row_sel = zm_row[e2_disp_buf_sync[1:0]];
+wire [9:0]  zm_col_sel = zm_col[e2_disp_buf_sync[1:0]];
+wire [20:0] zm_row_x640 = ({11'd0, zm_row_sel} << 9) + ({11'd0, zm_row_sel} << 7);  // row*640
+wire [9:0]  zoom_col0   = zm_col_sel;   // 按页取商品列起点
+
 
 wire [23:0] zoom_data;
 wire        zoom_pop;
@@ -1164,13 +1214,15 @@ video_effect_overlay u_video_effect_overlay (
     .I_fade_level          (e2_fade_level),
     .I_transition_active   (e2_transition_active),
     .I_transition_reveal_x (e2_transition_reveal_x),
+    .I_y                   (video_y_cnt),
+    .I_mode                (m_trans[1:0]),     // 0=FADE 1=横向 2=上下 3=中间向两侧
     .O_rgb                 (vout_data_pre)
 );
 
-wire [20:0] rd_addr_0 = zoom_en_v ? (BANK0_ADDR[20:0] + ZOOM_ROW_BASE) : BANK0_ADDR[20:0];
-wire [20:0] rd_addr_1 = zoom_en_v ? (BANK1_ADDR[20:0] + ZOOM_ROW_BASE) : BANK1_ADDR[20:0];
-wire [20:0] rd_addr_2 = zoom_en_v ? (BANK2_ADDR[20:0] + ZOOM_ROW_BASE) : BANK2_ADDR[20:0];
-wire [20:0] rd_addr_3 = zoom_en_v ? (BANK3_ADDR[20:0] + ZOOM_ROW_BASE) : BANK3_ADDR[20:0];
+wire [20:0] rd_addr_0 = zoom_en_v ? (BANK0_ADDR[20:0] + zm_row_x640) : BANK0_ADDR[20:0];
+wire [20:0] rd_addr_1 = zoom_en_v ? (BANK1_ADDR[20:0] + zm_row_x640) : BANK1_ADDR[20:0];
+wire [20:0] rd_addr_2 = zoom_en_v ? (BANK2_ADDR[20:0] + zm_row_x640) : BANK2_ADDR[20:0];
+wire [20:0] rd_addr_3 = zoom_en_v ? (BANK3_ADDR[20:0] + zm_row_x640) : BANK3_ADDR[20:0];
 wire [20:0] rd_len    = zoom_en_v ? ZOOM_LEN : FRAME_PIXELS[20:0];
 wire        fifo_re   = zoom_en_v ? zoom_pop : video_read_en;
 
@@ -1415,7 +1467,7 @@ audio_arc_calculate #(
 // ===================== 卡内文字 mask 叠加（最后一级）=====================
 wire [9:0] mask_slide_off;
 wire       mask_trans_busy = e2_transition_active | transition_busy_video | e2_transition_pending;
-wire       mask_hide       = menu_panel_vis | zoom_en_v;
+wire       mask_hide       = zoom_en_v;   // 2026-10-31：设置面板不再隐藏左上角标（仅放大时隐藏）
 
 mask_slide u_mask_slide (
     .clk          (video_clk),
@@ -1441,12 +1493,26 @@ mask_overlay u_mask_overlay (
     .rgb_out   (vout_data_mask)
 );
 
+// ===== Z1 标定：在最终画面上描出当前页的放大窗口（320x240 红框） =====
+// ZOOM_BOX_EN=1 时用于标定窗口位置；标定完成后置 0 即可关闭（几乎零成本）
+localparam ZOOM_BOX_EN = 1'b0;   // 标定框：需要时置 1
+wire [9:0] zb_x0 = zm_col_sel;
+wire [9:0] zb_y0 = zm_row_sel;
+wire [9:0] zb_x1 = zm_col_sel + 10'd319;
+wire [9:0] zb_y1 = zm_row_sel + 10'd239;
+wire zb_h = ((video_y_cnt == zb_y0) || (video_y_cnt == zb_y1)) &&
+            (video_x_cnt >= zb_x0) && (video_x_cnt <= zb_x1);
+wire zb_v = ((video_x_cnt == zb_x0) || (video_x_cnt == zb_x1)) &&
+            (video_y_cnt >= zb_y0) && (video_y_cnt <= zb_y1);
+wire zb_show = ZOOM_BOX_EN && (e2_disp_buf_sync != 2'd0);   // 封面页不放大，也不描框
+wire [23:0] vout_data_box = (zb_show && osd_de && (zb_h || zb_v)) ? 24'hFF0000 : vout_data_mask;
+
 video_rgb_to_axis_640x480 u_video_rgb_to_axis_640x480(
     .I_clk         (video_clk),
     .I_rst         (rst_all),
     .I_vs          (osd_vs),
     .I_de          (osd_de),
-        .I_rgb         (vout_data_mask),
+        .I_rgb         (vout_data_box),
     .O_video_user  (axis_s_user),
     .O_video_valid (axis_s_valid),
     .O_video_last  (axis_s_last),

@@ -18,10 +18,11 @@ module mask_overlay (
     input      [9:0]  slide_r,
     output reg [23:0] rgb_out
 );
-    localparam [10:0] LWX0 = 11'd60,  LWX1 = 11'd260;   // 200 宽，卡片内居中
+    localparam [10:0] LWX0 = 11'd10,  LWX1 = 11'd210;   // 2026-10-31：角标占据左上角（原 PAGE 位置）
     localparam [10:0] RWX0 = 11'd360, RWX1 = 11'd560;
-    localparam [9:0]  WY0  = 10'd340, WY1  = 10'd420;   // 80 高，必须与 ROM 行数一致
-    localparam [23:0] TEXT_COLOR = 24'h3A2A1E;   // 深棕（卡片是米白底）
+    localparam [9:0]  WY0  = 10'd7,   WY1  = 10'd87;    // 80 高，必须与 ROM 行数一致
+    localparam [23:0] TEXT_COLOR = 24'hF6ECDC;   // 米白（压在深色底板上）
+    localparam [23:0] PLATE_COLOR= 24'h3A2A1E;   // 角标底板：深棕
 
     wire in_y = (y >= WY0) && (y < WY1);
     wire [10:0] lx = x - LWX0 + slide_l;
@@ -79,10 +80,14 @@ module mask_overlay (
 
     wire on = (q >> bidx_q) & 1'b1;     // 1bit / 像素
 
+    // 角标底板：窗口左上角 148x44 的深色圆角块（圆角用两点裁角）
+    wire plate = !panel_vis && de && (x >= 11'd6) && (x < 11'd152)
+                            && (y >= 10'd4) && (y < 10'd34);   // 覆盖左上角旧 PAGE 底框(8..30)，与角标合为一体
+
     always @(posedge clk) begin
         if (rst)             rgb_out <= 24'd0;
-        else if (!hit_q)     rgb_out <= rgb_in;
         else if (on)         rgb_out <= TEXT_COLOR;
+        else if (plate)      rgb_out <= PLATE_COLOR;   // 角标底板（深棕）
         else                 rgb_out <= rgb_in;
     end
 endmodule

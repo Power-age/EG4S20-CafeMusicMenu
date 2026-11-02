@@ -21,6 +21,8 @@ module sd_card_bmp #(
     output reg [15:0]           display_active_height,
     output reg [15:0]           display_active_offset_x,
     output reg [15:0]           display_active_offset_y,
+    output reg                  geom_we,        // 2026-10-30：几何写入脉冲（每张图提交时）
+    output reg [1:0]            geom_bank,      // 该几何属于哪个 bank
 
     input                       write_finish_toggle,
     output [1:0]                write_buf_idx,
@@ -171,8 +173,6 @@ wire [3:0]  current_track_index;
 wire [87:0] current_track_name;
 
 // WAV 簇链与三源仲裁
-wire        wav_chain_m_req;
-wire [31:0] wav_chain_m_addr;
 wire [7:0]  wav_chain_data;
 wire        wav_chain_valid;
 wire        wav_chain_end;
@@ -322,12 +322,10 @@ assign bank_valid_out = bank_valid;
 assign all_resident_out = all_resident;
 // 仅在仲裁锁定(grant_valid=1)时按 grant 接通，空闲窗口一律 request=0
 assign sd_sec_read_request = sec_grant_valid ?
-    ((sec_grant==2'd0) ? scn_read_lvl :
-     (sec_grant==2'd2) ? wav_chain_m_req : chain_m_req) : 1'b0;
+    ((sec_grant==2'd0) ? scn_read_lvl : chain_m_req) : 1'b0;
 assign sd_sec_read      = sd_sec_read_request && !sd_read_timeout_expired;
 assign sd_sec_read_addr =
-    (sec_grant==2'd0) ? scn_sec_lba :
-    (sec_grant==2'd2) ? wav_chain_m_addr : chain_m_addr;
+    (sec_grant==2'd0) ? scn_sec_lba : chain_m_addr;
 assign scn_sec_busy       = scn_busy_reg;
 assign scn_sec_valid      = scan_phase ? sd_sec_read_data_valid : 1'b0;
 assign scn_sec_byte       = sd_sec_read_data;
@@ -660,6 +658,8 @@ always @(posedge clk or posedge rst) begin
         display_active_height <= 16'd480;
         display_active_offset_x <= 16'd0;
         display_active_offset_y <= 16'd0;
+        geom_we               <= 1'b0;
+        geom_bank             <= 2'd0;
         img_cluster0          <= 32'd0;
         img_cluster1          <= 32'd0;
         img_cluster2          <= 32'd0;
@@ -748,16 +748,22 @@ always @(posedge clk or posedge rst) begin
                 source_done_seen      <= 1'b0;
                 write_finish_seen     <= 1'b0;
                 load_retry_used       <= 1'b0;
+                // 2026-10-30：每次提交都送出该 bank 的几何（原来只在第一张图时锁存，
+                // 导致"全局几何卡在第一张图"，混放不同比例素材会串框）
+                display_active_width    <= pending_active_width;
+                display_active_height   <= pending_active_height;
+                display_active_offset_x <= pending_active_offset_x;
+                display_active_offset_y <= pending_active_offset_y;
+                geom_we                 <= 1'b1;
+                geom_bank               <= load_idx;
                 if (!first_image_committed) begin
                     disp_buf_idx          <= load_idx;
                     img_idx               <= load_idx;
-                    display_active_width  <= pending_active_width;
-                    display_active_height <= pending_active_height;
-                    display_active_offset_x <= pending_active_offset_x;
-                    display_active_offset_y <= pending_active_offset_y;
                     display_valid         <= 1'b1;
                     first_image_committed <= 1'b1;
                 end
+            end else begin
+                geom_we <= 1'b0;
             end
 
             // 上电后自动发起一次“扫描前 4 张 BMP”
@@ -960,7 +966,7 @@ track_controller u_track_controller (
     .player_start       (track_player_start),
     .player_stop        (track_player_stop),
     .player_size        (track_player_size),
-    .sector_idle        (!wav_chain_m_req && !(sec_grant_valid && sec_grant == 2'd2)),
+    .sector_idle        (!chain_m_req && !(sec_grant_valid && sec_grant == 2'd1)),
     .chain_load_start   (track_chain_load),
     .chain_start_cluster(track_chain_cluster),
     .playlist_active    (playlist_active),
@@ -968,25 +974,57 @@ track_controller u_track_controller (
     .current_name       (current_track_name)
 );
 
+// ============================================================================
+// 2026-10-30：两个簇链翻译器合并为一个（图 / BGM 不会同时读，省约 1000 LUT）
+//   归属判定：谁最后发起 load_start，就归谁；图装载发生在 all_resident 之前，
+//   BGM 只在 all_resident 之后才开始，因此实际上互不重叠。
+//   切换归属时翻译器会重新按 start_cluster 定位，请求方用绝对文件扇区号 k，
+//   所以重新定位后仍能续读（极端情况下会重新走一次簇链，表现为短暂停顿）。
+// ============================================================================
+reg owner_wav;
+always @(posedge clk or posedge rst) begin
+    if (rst)                    owner_wav <= 1'b0;
+    else if (wav_load_start)    owner_wav <= 1'b1;
+    else if (load_start_pulse)  owner_wav <= 1'b0;
+end
+
+wire        chain_sh_load  = load_start_pulse | wav_load_start;
+wire [31:0] chain_sh_clu   = wav_load_start ? track_chain_cluster : load_cluster;
+wire        chain_sh_req   = owner_wav ? wav_pcreq : bmp_sec_read;
+wire [31:0] chain_sh_k     = owner_wav ? wav_pck   : bmp_sec_addr;
+
+wire [7:0]  chain_sh_data;
+wire        chain_sh_valid, chain_sh_end, chain_sh_error;
+
+assign chain_to_bmp_data  = chain_sh_data;
+assign chain_to_bmp_valid = chain_sh_valid && !owner_wav;
+assign chain_to_bmp_end   = chain_sh_end   && !owner_wav;
+assign chain_to_bmp_error = chain_sh_error && !owner_wav;
+
+assign wav_chain_data  = chain_sh_data;
+assign wav_chain_valid = chain_sh_valid && owner_wav;
+assign wav_chain_end   = chain_sh_end   && owner_wav;
+assign wav_chain_error = chain_sh_error && owner_wav;
+
 fat32_chain_reader u_chain(
     .clk            (clk),
     .rst            (rst),
 
-    .load_start     (load_start_pulse),
-    .start_cluster  (load_cluster),
+    .load_start     (chain_sh_load),
+    .start_cluster  (chain_sh_clu),
 
     .fat_start_lba  (scn_fat_start),
     .data_start_lba (scn_data_start),
     .max_cluster    (scn_max_cluster),
     .spc            (scn_spc),
 
-    .bmp_req        (bmp_sec_read),
-    .bmp_k          (bmp_sec_addr),
+    .bmp_req        (chain_sh_req),
+    .bmp_k          (chain_sh_k),
 
-    .to_bmp_data    (chain_to_bmp_data),
-    .to_bmp_valid   (chain_to_bmp_valid),
-    .to_bmp_end     (chain_to_bmp_end),
-    .to_bmp_error   (chain_to_bmp_error),
+    .to_bmp_data    (chain_sh_data),
+    .to_bmp_valid   (chain_sh_valid),
+    .to_bmp_end     (chain_sh_end),
+    .to_bmp_error   (chain_sh_error),
 
     .sd_req         (chain_m_req),
     .sd_addr        (chain_m_addr),
@@ -995,46 +1033,18 @@ fat32_chain_reader u_chain(
     .sd_end         ((sec_grant==2'd1) && sd_sec_read_end)
 );
 
-// ---- SD 读通道三源仲裁 ----
+// ---- SD 读通道二源仲裁（扫描器 / 共享簇链翻译器）----
 sec_channel_arbiter u_sec_arb(
     .clk        (clk),
     .rst        (rst),
     .scan_req   (scn_read_lvl),
     .pic_req    (chain_m_req),
-    .wav_req    (wav_chain_m_req),
+    .wav_req    (1'b0),
     .wav_allowed(all_resident),
     .sec_end    (sd_sec_read_end),
     .sec_timeout(sd_read_timeout_pulse),
     .grant      (sec_grant),
     .grant_valid(sec_grant_valid)
-);
-
-// ---- WAV 专用簇链翻译（bmp 侧步骤3接 wav_stream_player）----
-fat32_chain_reader u_wav_chain(
-    .clk            (clk),
-    .rst            (rst),
-
-    .load_start     (wav_load_start),
-    .start_cluster  (track_chain_cluster),
-
-    .fat_start_lba  (scn_fat_start),
-    .data_start_lba (scn_data_start),
-    .max_cluster    (scn_max_cluster),
-    .spc            (scn_spc),
-
-    .bmp_req        (wav_pcreq),
-    .bmp_k          (wav_pck),
-
-    .to_bmp_data    (wav_chain_data),
-    .to_bmp_valid   (wav_chain_valid),
-    .to_bmp_end     (wav_chain_end),
-    .to_bmp_error   (wav_chain_error),
-
-    .sd_req         (wav_chain_m_req),
-    .sd_addr        (wav_chain_m_addr),
-    .sd_data        (sd_sec_read_data),
-    .sd_valid       ((sec_grant==2'd2) && sd_sec_read_data_valid),
-    .sd_end         ((sec_grant==2'd2) && sd_sec_read_end)
 );
 
 // ---- WAV 流式播放器（写侧连 wav chain，读侧在 audio_mclk 域）----

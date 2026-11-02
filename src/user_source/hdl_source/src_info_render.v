@@ -1,9 +1,9 @@
-// 左上角信息条（V2）：显示页码 "PAGE n/4"，替代原 "SRC <W>X<H>"
+// 左上角信息条（V2）：显示页码 "PAGE n/4"（4 bank 版），替代原 "SRC <W>X<H>"
 // 缓冲区行 72、字符列 20~31（与右上角状态栏同行不同列）
 module src_info_render (
     input  wire        clk,
     input  wire        rst,
-    input  wire [1:0]  img_idx,
+    input  wire [2:0]  img_idx,
     input  wire [15:0] src_w,
     input  wire [15:0] src_h,
     output reg         req_valid,
@@ -21,14 +21,18 @@ module src_info_render (
     reg [95:0] msg;
     always @(*) begin
         case (img_idx)
-            2'd0:    msg = "PAGE 1/4    ";
-            2'd1:    msg = "PAGE 2/4    ";
-            2'd2:    msg = "PAGE 3/4    ";
-            default: msg = "PAGE 4/4    ";
+            3'd0:    msg = "            ";   // 2026-10-31：PAGE 条改由中文角标取代，这里画空格清屏
+            3'd1:    msg = "            ";
+            3'd2:    msg = "            ";
+            3'd3:    msg = "            ";
+            3'd4:    msg = "            ";
+            3'd5:    msg = "            ";
+            3'd6:    msg = "            ";
+            default: msg = "            ";
         endcase
     end
 
-    reg [1:0] idx_q;
+    reg [2:0] idx_q;
     reg       booted;
     reg [3:0] col;
     reg [2:0] st;
@@ -47,7 +51,7 @@ module src_info_render (
 
     always @(posedge clk or posedge rst) begin
         if (rst) begin
-            idx_q <= 2'd0; booted <= 1'b0; dirty <= 1'b1;
+            idx_q <= 3'd0; booted <= 1'b0; dirty <= 1'b1;
             st <= S_IDLE; col <= 4'd0; req_valid <= 1'b0;
             ascii_r <= 7'd0; x_r <= {3'd0, COL_BASE}; type_r <= 2'b10;
         end else begin
