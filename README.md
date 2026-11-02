@@ -20,6 +20,15 @@
 | 交互 | 7 项设置面板（音量/亮度/对比度/转场/自动轮播/周期/TONE）、切歌、音量 16 档（SW2 预设） |
 | OSD | 右上角「歌名 + 剩余时间」、左上角中文角标、中央设置面板，逐像素叠加不破坏底图 |
 
+## 提交包内容（submission/）
+
+| 目录 | 内容 |
+|---|---|
+| submission/report/ | 技术报告（docx + pdf）与图 1/2/8/9/10 |
+| submission/assets/ | 演示素材：PIC1~PIC4.BMP + TRACK01~03.RAW（拷到 FAT32 卡根目录即可复现）|
+| submission/build_reports/ | 定稿版时序报告与综合面积报告 |
+
+详见 submission/README.md。
 ## 目录结构
 
 ```
